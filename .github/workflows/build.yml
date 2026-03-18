@@ -29,3 +29,17 @@ jobs:
 
       - name: Plugin derle
         run: ./gradlew ExampleProvider:make
+
+      - name: Build dosyalarını göster
+        run: |
+          find . -type f | grep -E '\.(cs3|zip|json)$' || true
+
+      - name: Artifact yükle
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-plugin-build
+          path: |
+            **/*.cs3
+            **/build/**/*.zip
+            **/build/**/*.json
+          if-no-files-found: warn
