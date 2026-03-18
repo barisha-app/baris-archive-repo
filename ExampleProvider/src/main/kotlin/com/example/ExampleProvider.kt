@@ -9,6 +9,7 @@ import com.lagradost.cloudstream3.newMovieLoadResponse
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.Qualities
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 
@@ -26,7 +27,7 @@ class ExampleProvider : MainAPI() {
 
         val response = app.get(url).text
         val json = JSONObject(response)
-        val docs = json.getJSONObject("response").getJSONArray("docs")
+        val docs: JSONArray = json.getJSONObject("response").getJSONArray("docs")
 
         val results = mutableListOf<SearchResponse>()
 
