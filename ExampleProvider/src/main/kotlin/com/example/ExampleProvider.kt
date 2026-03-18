@@ -2,42 +2,63 @@ package com.example
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
 class ExampleProvider : MainAPI() {
+    override var name = "Internet Archive"
     override var mainUrl = "https://archive.org"
-    override var name = "Archive Movies"
-    override val supportedTypes = setOf(TvType.Movie)
-    override var lang = "en"
-    override val hasMainPage = false
+    override val hasMainPage = true
+    override var lang = "tr"
+    override val supportedTypes = setOf(TvType.Movie, TvType.Documentary)
 
-    override suspend fun search(query: String): List<SearchResponse> {
-        val encoded = URLEncoder.encode(query, "UTF-8")
-        val url = "$mainUrl/search?query=$encoded+AND+mediatype%3A%28movies%29"
+    override val mainPage = mainPageOf(
+        "$mainUrl/details/movies" to "Filmler",
+        "$mainUrl/details/feature_films" to "Uzun Metraj",
+        "$mainUrl/details/documentaryandfieldrecordings" to "Belgeseller"
+    )
 
-        val document = app.get(url).document
-
-        return document.select("div.item-ia").mapNotNull { item ->
-            val linkEl = item.selectFirst("a[href*=/details/]") ?: return@mapNotNull null
+    private fun parseCard(document: Document): List<SearchResponse> {
+        return document.select("div.item-ia, div.results_item, div.item-box").mapNotNull { item ->
+            val link = item.selectFirst("a[href*=/details/]") ?: return@mapNotNull null
             val title =
                 item.selectFirst(".C234")?.text()?.trim()
-                    ?: linkEl.attr("title").trim()
-                    ?: linkEl.text().trim()
+                    ?: item.selectFirst("img")?.attr("alt")?.trim()
+                    ?: link.attr("title").trim()
+                    ?: link.text().trim()
 
-            val href = linkEl.absUrl("href").ifBlank { mainUrl + linkEl.attr("href") }
+            val href = link.absUrl("href").ifBlank { mainUrl + link.attr("href") }
             val poster =
                 item.selectFirst("img")?.attr("data-src")
-                    ?: item.selectFirst("img")?.attr("src")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: item.selectFirst("img")?.absUrl("src")
 
             newMovieSearchResponse(
-                title.ifBlank { "Archive Item" },
+                title.ifBlank { "Internet Archive" },
                 href,
                 TvType.Movie
             ) {
                 this.posterUrl = poster
             }
         }
+    }
+
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        val pagedUrl = if (page == 1) request.data else "${request.data}?page=$page"
+        val document = app.get(pagedUrl).document
+        val items = parseCard(document)
+
+        return newHomePageResponse(
+            request.name,
+            items
+        )
+    }
+
+    override suspend fun search(query: String): List<SearchResponse> {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val url = "$mainUrl/search?query=$encoded+AND+mediatype%3A%28movies%29"
+        val document = app.get(url).document
+        return parseCard(document)
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -54,7 +75,10 @@ class ExampleProvider : MainAPI() {
 
         val plot =
             document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
+                ?: document.selectFirst(".js-description")?.text()?.trim()
                 ?: document.selectFirst(".description")?.text()?.trim()
+
+        val tags = document.select("span.badge, a[href*=subject]").map { it.text() }.filter { it.isNotBlank() }
 
         return newMovieLoadResponse(
             title,
@@ -64,6 +88,7 @@ class ExampleProvider : MainAPI() {
         ) {
             this.posterUrl = poster
             this.plot = plot
+            this.tags = tags
         }
     }
 
@@ -78,9 +103,15 @@ class ExampleProvider : MainAPI() {
 
         document.select("source[src], a[href]").forEach { el ->
             val raw = el.attr("src").ifBlank { el.attr("href") }
-            val full = if (raw.startsWith("http")) raw else mainUrl + raw
+            if (raw.isBlank()) return@forEach
 
-            if (full.contains(".mp4", ignoreCase = true) || full.contains("/download/")) {
+            val full = when {
+                raw.startsWith("http") -> raw
+                raw.startsWith("/") -> "$mainUrl$raw"
+                else -> "$mainUrl/$raw"
+            }
+
+            if (full.contains(".mp4", true) || full.contains("/download/", true)) {
                 callback(
                     newExtractorLink(
                         source = name,
@@ -90,6 +121,15 @@ class ExampleProvider : MainAPI() {
                     )
                 )
                 found = true
+            }
+
+            if (full.endsWith(".vtt", true) || full.endsWith(".srt", true)) {
+                subtitleCallback(
+                    SubtitleFile(
+                        lang = "Türkçe",
+                        url = full
+                    )
+                )
             }
         }
 
