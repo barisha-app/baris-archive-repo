@@ -1,16 +1,8 @@
 package com.example
 
-import com.lagradost.cloudstream3.MainAPI
-import com.lagradost.cloudstream3.SearchResponse
-import com.lagradost.cloudstream3.LoadResponse
-import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.SubtitleFile
-import com.lagradost.cloudstream3.newMovieLoadResponse
-import com.lagradost.cloudstream3.newMovieSearchResponse
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
-import org.json.JSONArray
-import org.json.JSONObject
+import com.lagradost.cloudstream3.*
+import com.lagradost.cloudstream3.utils.*
+import org.jsoup.Jsoup
 import java.net.URLEncoder
 
 class ExampleProvider : MainAPI() {
@@ -21,72 +13,57 @@ class ExampleProvider : MainAPI() {
     override val hasMainPage = false
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
-        val url =
-            "$mainUrl/advancedsearch.php?q=$encodedQuery+AND+mediatype:(movies)&fl[]=identifier&fl[]=title&output=json&rows=20&page=1"
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val url = "$mainUrl/search?query=$encoded+AND+mediatype%3A%28movies%29"
 
-        val response = app.get(url).text
-        val json = JSONObject(response)
-        val docs: JSONArray = json.getJSONObject("response").getJSONArray("docs")
+        val document = app.get(url).document
 
-        val results = mutableListOf<SearchResponse>()
+        return document.select("div.item-ia").mapNotNull { item ->
+            val linkEl = item.selectFirst("a[href*=/details/]") ?: return@mapNotNull null
+            val title =
+                item.selectFirst(".C234")?.text()?.trim()
+                    ?: linkEl.attr("title").trim()
+                    ?: linkEl.text().trim()
 
-        for (i in 0 until docs.length()) {
-            val item = docs.getJSONObject(i)
-            val identifier = item.optString("identifier")
-            val title = item.optString("title", identifier)
+            val href = linkEl.absUrl("href").ifBlank { mainUrl + linkEl.attr("href") }
+            val poster =
+                item.selectFirst("img")?.attr("data-src")
+                    ?: item.selectFirst("img")?.attr("src")
 
-            if (identifier.isNotBlank()) {
-                results.add(
-                    newMovieSearchResponse(
-                        title,
-                        "$mainUrl/details/$identifier",
-                        TvType.Movie
-                    )
-                )
+            newMovieSearchResponse(
+                title.ifBlank { "Archive Item" },
+                href,
+                TvType.Movie
+            ) {
+                this.posterUrl = poster
             }
         }
-
-        return results
     }
 
-    override suspend fun load(url: String): LoadResponse {
-        val identifier = url.substringAfter("/details/").substringBefore("?")
-        val metadataUrl = "$mainUrl/metadata/$identifier"
+    override suspend fun load(url: String): LoadResponse? {
+        val document = app.get(url).document
 
-        val response = app.get(metadataUrl).text
-        val json = JSONObject(response)
+        val title =
+            document.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
+                ?: document.selectFirst("h1")?.text()?.trim()
+                ?: return null
 
-        val metadata = json.getJSONObject("metadata")
-        val title = metadata.optString("title", identifier)
-        val description = metadata.optString("description", "")
-        val files = json.getJSONArray("files")
+        val poster =
+            document.selectFirst("meta[property=og:image]")?.attr("content")
+                ?: document.selectFirst(".item-image img")?.absUrl("src")
 
-        var videoUrl: String? = null
-
-        for (i in 0 until files.length()) {
-            val file = files.getJSONObject(i)
-            val fileName = file.optString("name")
-            val format = file.optString("format")
-
-            val isMp4 =
-                format.contains("mp4", ignoreCase = true) ||
-                format.contains("h.264", ignoreCase = true) ||
-                fileName.endsWith(".mp4", ignoreCase = true)
-
-            if (isMp4) {
-                videoUrl = "$mainUrl/download/$identifier/$fileName"
-                break
-            }
-        }
+        val plot =
+            document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
+                ?: document.selectFirst(".description")?.text()?.trim()
 
         return newMovieLoadResponse(
             title,
             url,
             TvType.Movie,
-            videoUrl ?: ""
+            url
         ) {
-            plot = description
+            this.posterUrl = poster
+            this.plot = plot
         }
     }
 
@@ -96,19 +73,26 @@ class ExampleProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        if (data.isBlank()) return false
+        val document = app.get(data).document
+        var found = false
 
-        callback.invoke(
-            ExtractorLink(
-                source = name,
-                name = name,
-                url = data,
-                referer = "",
-                quality = Qualities.Unknown.value,
-                isM3u8 = false
-            )
-        )
+        document.select("source[src], a[href]").forEach { el ->
+            val raw = el.attr("src").ifBlank { el.attr("href") }
+            val full = if (raw.startsWith("http")) raw else mainUrl + raw
 
-        return true
+            if (full.contains(".mp4", ignoreCase = true) || full.contains("/download/")) {
+                callback(
+                    newExtractorLink(
+                        source = name,
+                        name = name,
+                        url = full,
+                        type = INFER_TYPE
+                    )
+                )
+                found = true
+            }
+        }
+
+        return found
     }
 }
