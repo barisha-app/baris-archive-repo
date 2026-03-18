@@ -3,6 +3,7 @@
     "name": "Internet Archive",
     "url": "https://github.com/barisha-app/baris-archive-repo/releases/download/v1.0/ExampleProvider.cs3",
     "version": 1,
-    "internalName": "InternetArchive"
+    "internalName": "internetarchive",
+    "fileSize": 10000
   }
 ]
