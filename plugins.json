@@ -1,7 +1,17 @@
 [
   {
+    "url": "https://github.com/barisha-app/baris-archive-repo/releases/download/v1.1/ExampleProvider.cs3",
+    "status": 1,
+    "version": 2,
+    "apiVersion": 1,
     "name": "Internet Archive",
-    "url": "https://github.com/barisha-app/baris-archive-repo/releases/download/v1.1/ExampleProvider.cs3?raw=true",
-    "version": 3
+    "internalName": "internetarchive",
+    "authors": ["barisha-app"],
+    "description": "Internet Archive film ve belgesel eklentisi",
+    "repositoryUrl": "https://github.com/barisha-app/baris-archive-repo",
+    "tvTypes": ["Movie", "Documentary"],
+    "language": "tr",
+    "iconUrl": "https://archive.org/images/glogo.png",
+    "isAdult": false
   }
 ]
