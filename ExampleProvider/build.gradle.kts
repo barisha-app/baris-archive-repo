@@ -1,11 +1,10 @@
-version = 1
+version = 2
 
 cloudstream {
-    description = "Internet Archive movie search plugin"
-    authors = listOf("Barış")
+    language = "tr"
+    description = "Internet Archive film ve belgesel eklentisi"
+    authors = listOf("barisha")
     status = 1
-    tvTypes = listOf("Movie")
-    requiresResources = false
-    language = "en"
+    tvTypes = listOf("Movie", "Documentary")
     iconUrl = "https://archive.org/images/glogo.png"
 }
