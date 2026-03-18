@@ -1,0 +1,8 @@
+{
+  "name": "Baris Archive Repo",
+  "description": "Internet Archive plugin repository",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/barisha-app/baris-archive-repo/master/plugins.json"
+  ]
+}
