@@ -6,9 +6,8 @@ import com.lagradost.cloudstream3.LoadResponse
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.newMovieSearchResponse
 import com.lagradost.cloudstream3.newMovieLoadResponse
-import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
-import com.lagradost.cloudstream3.utils.SubtitleFile
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import com.lagradost.cloudstream3.SubtitleFile
 import org.json.JSONObject
 import java.net.URLEncoder
 
@@ -93,18 +92,16 @@ class ExampleProvider : MainAPI() {
         data: String,
         isCasting: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
+        callback: (com.lagradost.cloudstream3.utils.ExtractorLink) -> Unit
     ): Boolean {
         if (data.isBlank()) return false
 
         callback.invoke(
-            ExtractorLink(
+            newExtractorLink(
                 source = name,
                 name = name,
                 url = data,
-                referer = "",
-                quality = Qualities.Unknown.value,
-                isM3u8 = false
+                type = com.lagradost.cloudstream3.utils.INFER_TYPE
             )
         )
 
