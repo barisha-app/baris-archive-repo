@@ -1,84 +1,69 @@
 package com.example
 
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
-import org.jsoup.nodes.Document
 import java.net.URLEncoder
 
 class ExampleProvider : MainAPI() {
     override var name = "Internet Archive"
     override var mainUrl = "https://archive.org"
-    override val hasMainPage = true
+    override val hasMainPage = false
     override var lang = "tr"
     override val supportedTypes = setOf(TvType.Movie, TvType.Documentary)
 
-    override val mainPage = mainPageOf(
-        "$mainUrl/details/movies" to "Filmler",
-        "$mainUrl/details/feature_films" to "Uzun Metraj",
-        "$mainUrl/details/documentaryandfieldrecordings" to "Belgeseller"
-    )
-
-    private fun parseCard(document: Document): List<SearchResponse> {
-        return document.select("div.item-ia, div.results_item, div.item-box").mapNotNull { item ->
-            val link = item.selectFirst("a[href*=/details/]") ?: return@mapNotNull null
-            val title =
-                item.selectFirst(".C234")?.text()?.trim()
-                    ?: item.selectFirst("img")?.attr("alt")?.trim()
-                    ?: link.attr("title").trim()
-                    ?: link.text().trim()
-
-            val href = link.absUrl("href").ifBlank { mainUrl + link.attr("href") }
-            val poster =
-                item.selectFirst("img")?.attr("data-src")
-                    ?.takeIf { it.isNotBlank() }
-                    ?: item.selectFirst("img")?.absUrl("src")
-
-            newMovieSearchResponse(
-                title.ifBlank { "Internet Archive" },
-                href,
-                TvType.Movie
-            ) {
-                this.posterUrl = poster
-            }
-        }
-    }
-
-    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
-        val pagedUrl = if (page == 1) request.data else "${request.data}?page=$page"
-        val document = app.get(pagedUrl).document
-        val items = parseCard(document)
-
-        return newHomePageResponse(
-            request.name,
-            items
-        )
-    }
+    private val mapper = jacksonObjectMapper()
 
     override suspend fun search(query: String): List<SearchResponse> {
+        if (query.isBlank()) return emptyList()
+
         val encoded = URLEncoder.encode(query, "UTF-8")
-        val url = "$mainUrl/search?query=$encoded+AND+mediatype%3A%28movies%29"
-        val document = app.get(url).document
-        return parseCard(document)
+        val url =
+            "$mainUrl/advancedsearch.php?q=$encoded+AND+mediatype:(movies)" +
+                    "&fl[]=identifier&fl[]=title&fl[]=mediatype&fl[]=description" +
+                    "&rows=20&page=1&output=json"
+
+        val text = app.get(url).text
+        val root = mapper.readTree(text)
+        val docs = root.path("response").path("docs")
+
+        val results = mutableListOf<SearchResponse>()
+
+        for (item in docs) {
+            val identifier = item.path("identifier").asText("")
+            val title = item.path("title").asText(identifier)
+
+            if (identifier.isNotBlank()) {
+                val detailsUrl = "$mainUrl/details/$identifier"
+                val poster = "$mainUrl/services/img/$identifier"
+
+                results.add(
+                    newMovieSearchResponse(
+                        title.ifBlank { "Internet Archive" },
+                        detailsUrl,
+                        TvType.Movie
+                    ) {
+                        this.posterUrl = poster
+                    }
+                )
+            }
+        }
+
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
+        val identifier = url.substringAfter("/details/").substringBefore("?").trim()
+        if (identifier.isBlank()) return null
 
-        val title =
-            document.selectFirst("meta[property=og:title]")?.attr("content")?.trim()
-                ?: document.selectFirst("h1")?.text()?.trim()
-                ?: return null
+        val metadataUrl = "$mainUrl/metadata/$identifier"
+        val text = app.get(metadataUrl).text
+        val root = mapper.readTree(text)
 
-        val poster =
-            document.selectFirst("meta[property=og:image]")?.attr("content")
-                ?: document.selectFirst(".item-image img")?.absUrl("src")
-
-        val plot =
-            document.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
-                ?: document.selectFirst(".js-description")?.text()?.trim()
-                ?: document.selectFirst(".description")?.text()?.trim()
-
-        val tags = document.select("span.badge, a[href*=subject]").map { it.text() }.filter { it.isNotBlank() }
+        val metadata = root.path("metadata")
+        val title = metadata.path("title").asText(identifier)
+        val plot = metadata.path("description").asText("")
+        val poster = "$mainUrl/services/img/$identifier"
 
         return newMovieLoadResponse(
             title,
@@ -88,7 +73,6 @@ class ExampleProvider : MainAPI() {
         ) {
             this.posterUrl = poster
             this.plot = plot
-            this.tags = tags
         }
     }
 
@@ -98,36 +82,54 @@ class ExampleProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
-        val document = app.get(data).document
+        val identifier = data.substringAfter("/details/").substringBefore("?").trim()
+        if (identifier.isBlank()) return false
+
+        val metadataUrl = "$mainUrl/metadata/$identifier"
+        val text = app.get(metadataUrl).text
+        val root = mapper.readTree(text)
+        val files = root.path("files")
+
         var found = false
 
-        document.select("source[src], a[href]").forEach { el ->
-            val raw = el.attr("src").ifBlank { el.attr("href") }
-            if (raw.isBlank()) return@forEach
+        for (file in files) {
+            val name = file.path("name").asText("")
+            val format = file.path("format").asText("").lowercase()
 
-            val full = when {
-                raw.startsWith("http") -> raw
-                raw.startsWith("/") -> "$mainUrl$raw"
-                else -> "$mainUrl/$raw"
-            }
+            if (name.isBlank()) continue
 
-            if (full.contains(".mp4", true) || full.contains("/download/", true)) {
+            val fileUrl = "$mainUrl/download/$identifier/$name"
+
+            val isVideo =
+                name.endsWith(".mp4", true) ||
+                name.endsWith(".webm", true) ||
+                name.endsWith(".ogv", true) ||
+                format.contains("mpeg4") ||
+                format.contains("h.264") ||
+                format.contains("quicktime") ||
+                format.contains("webm")
+
+            val isSubtitle =
+                name.endsWith(".srt", true) ||
+                name.endsWith(".vtt", true)
+
+            if (isVideo) {
                 callback(
                     newExtractorLink(
-                        source = name,
-                        name = name,
-                        url = full,
+                        source = this.name,
+                        name = this.name,
+                        url = fileUrl,
                         type = INFER_TYPE
                     )
                 )
                 found = true
             }
 
-            if (full.endsWith(".vtt", true) || full.endsWith(".srt", true)) {
+            if (isSubtitle) {
                 subtitleCallback(
                     SubtitleFile(
-                        lang = "Türkçe",
-                        url = full
+                        lang = "Unknown",
+                        url = fileUrl
                     )
                 )
             }
